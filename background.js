@@ -12,6 +12,9 @@ import {
 /** @type {Map<number, { id: number, tabId: number, url: string, hostname: string, title: string, reason: string, openedAt: number }>} */
 const activeSessions = new Map();
 
+/** @type {Map<number, number>} Last reported duration per tab (seconds) */
+const lastKnownDuration = new Map();
+
 /** Tabs that already received (or skipped) the intent prompt this navigation cycle */
 const promptedTabs = new Set();
 
@@ -190,9 +193,27 @@ chrome.tabs.onUpdated.addListener(async (tabId, changeInfo, tab) => {
 
 chrome.tabs.onRemoved.addListener(async (tabId) => {
   await clearCompletionCheck(tabId);
+  /* Persist session to IndexedDB with final duration when tab is closed */
   await closeSessionForTab(tabId, 'tab_closed');
   promptedTabs.forEach((key) => {
     if (key.startsWith(`${tabId}:`)) promptedTabs.delete(key);
+  });
+  lastKnownDuration.delete(tabId);
+});
+
+chrome.commands.onCommand.addListener(async (command) => {
+  if (command !== 'stop-session') return;
+
+  const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+  if (!tab?.id || !tab.url || !isTrackableUrl(tab.url)) return;
+
+  const session = await getOrRestoreSession(tab.id);
+  if (!session) return;
+
+  await notifyTab(tab.id, {
+    type: 'SHOW_COMPLETION_CHECK',
+    automatic: false,
+    fromShortcut: true,
   });
 });
 
@@ -219,8 +240,15 @@ async function closeSessionForTab(tabId, reason = 'manual', options = {}) {
   if (!session) return null;
 
   const closedAt = Date.now();
-  const duration = Math.floor((closedAt - session.openedAt) / 1000);
-  const updates = { closedAt, duration };
+  const elapsed = Math.floor((closedAt - session.openedAt) / 1000);
+  const cached = lastKnownDuration.get(tabId) ?? 0;
+  const duration = Math.max(elapsed, cached);
+
+  const updates = {
+    closedAt,
+    duration,
+    closeReason: reason,
+  };
 
   if (options.completed != null) {
     updates.completed = options.completed;
@@ -229,18 +257,22 @@ async function closeSessionForTab(tabId, reason = 'manual', options = {}) {
   await updateSession(session.id, updates);
 
   activeSessions.delete(tabId);
+  lastKnownDuration.delete(tabId);
 
   promptedTabs.forEach((key) => {
     if (key.startsWith(`${tabId}:`)) promptedTabs.delete(key);
   });
 
-  try {
-    await notifyTab(tabId, { type: 'SESSION_CLOSED', reason });
-  } catch {
-    /* Tab may already be gone */
+  /* Tab is already gone when closed via the browser chrome */
+  if (reason !== 'tab_closed') {
+    try {
+      await notifyTab(tabId, { type: 'SESSION_CLOSED', reason });
+    } catch {
+      /* Tab may already be gone */
+    }
   }
 
-  return { ...session, closedAt, duration };
+  return { ...session, closedAt, duration, closeReason: reason };
 }
 
 /** --- Message handling --- */
@@ -305,6 +337,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       case 'UPDATE_DURATION': {
         const session = await getOrRestoreSession(tabId);
         if (session && message.duration != null) {
+          lastKnownDuration.set(tabId, message.duration);
           await updateSession(session.id, { duration: message.duration });
         }
         sendResponse({ ok: true });

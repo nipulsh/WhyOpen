@@ -57,6 +57,7 @@ export async function createSession(session) {
       closedAt: null,
       duration: 0,
       completed: null,
+      closeReason: null,
       date: new Date(session.openedAt).toISOString().slice(0, 10),
     };
     const req = store.add(record);

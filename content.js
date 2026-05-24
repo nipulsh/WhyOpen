@@ -13,9 +13,45 @@
   let currentSession = null;
   let promptVisible = false;
   let completionPromptVisible = false;
+  let extensionAvailable = true;
 
   /** --- Utilities --- */
 
+  function isExtensionContextValid() {
+    try {
+      return Boolean(chrome.runtime?.id);
+    } catch {
+      return false;
+    }
+  }
+
+  /** Stop messaging after reload/update — old content scripts lose extension access */
+  function handleContextInvalidated() {
+    if (!extensionAvailable) return;
+    extensionAvailable = false;
+    stopTimer();
+  }
+
+  async function sendMessage(message) {
+    if (!extensionAvailable || !isExtensionContextValid()) {
+      handleContextInvalidated();
+      return null;
+    }
+
+    try {
+      return await chrome.runtime.sendMessage(message);
+    } catch (error) {
+      const msg = error?.message || String(error);
+      if (
+        msg.includes("Extension context invalidated") ||
+        msg.includes("Could not establish connection") ||
+        msg.includes("Receiving end does not exist")
+      ) {
+        handleContextInvalidated();
+      }
+      return null;
+    }
+  }
   function formatDuration(seconds) {
     const h = Math.floor(seconds / 3600);
     const m = Math.floor((seconds % 3600) / 60);
@@ -24,10 +60,6 @@
       return `${h}:${String(m).padStart(2, "0")}:${String(s).padStart(2, "0")}`;
     }
     return `${m}:${String(s).padStart(2, "0")}`;
-  }
-
-  function sendMessage(message) {
-    return chrome.runtime.sendMessage(message);
   }
 
   function getRoot() {
@@ -213,9 +245,9 @@
         <h2 class="it-modal-title" id="it-completion-title">Did you complete your intention?</h2>
         ${checkInNote}
         <p class="it-modal-reason">"${escapeHtml(currentSession.reason)}"</p>
-        <div class="it-modal-actions it-modal-actions-row">
-          <button class="it-btn it-btn-success" id="it-done-btn">Done</button>
-          <button class="it-btn it-btn-secondary" id="it-not-done-btn">Not done</button>
+        <div class="it-modal-actions it-modal-actions-row" id="it-completion-actions">
+          <button class="it-btn it-btn-success" id="it-done-btn" type="button">Done</button>
+          <button class="it-btn it-btn-secondary it-btn-selected" id="it-not-done-btn" type="button">Not done</button>
         </div>
       </div>
     `;
@@ -223,12 +255,40 @@
     root.appendChild(overlay);
     document.body.classList.add("it-blurred");
 
-    overlay
-      .querySelector("#it-done-btn")
-      .addEventListener("click", () => finishSession(true));
-    overlay
-      .querySelector("#it-not-done-btn")
-      .addEventListener("click", dismissCompletionPrompt);
+    const doneBtn = overlay.querySelector("#it-done-btn");
+    const notDoneBtn = overlay.querySelector("#it-not-done-btn");
+    let selectedCompletion = "not-done";
+
+    function setCompletionSelection(choice) {
+      selectedCompletion = choice;
+      doneBtn.classList.toggle("it-btn-selected", choice === "done");
+      notDoneBtn.classList.toggle("it-btn-selected", choice === "not-done");
+      (choice === "done" ? doneBtn : notDoneBtn).focus();
+    }
+
+    doneBtn.addEventListener("click", () => finishSession(true));
+    notDoneBtn.addEventListener("click", () => dismissCompletionPrompt());
+
+    doneBtn.addEventListener("focus", () => setCompletionSelection("done"));
+    notDoneBtn.addEventListener("focus", () => setCompletionSelection("not-done"));
+
+    overlay.addEventListener("keydown", (e) => {
+      if (e.key === "ArrowLeft" || e.key === "ArrowRight") {
+        e.preventDefault();
+        setCompletionSelection(
+          selectedCompletion === "done" ? "not-done" : "done",
+        );
+        return;
+      }
+
+      if (e.key === "Enter") {
+        e.preventDefault();
+        if (selectedCompletion === "done") finishSession(true);
+        else dismissCompletionPrompt();
+      }
+    });
+
+    setCompletionSelection("not-done");
   }
 
   async function dismissCompletionPrompt() {
@@ -263,8 +323,14 @@
   }
 
   function startTimer() {
+    if (!extensionAvailable) return;
     stopTimer();
     timerInterval = setInterval(() => {
+      if (!extensionAvailable) {
+        stopTimer();
+        return;
+      }
+
       const timerEl = document.getElementById("it-timer");
       if (timerEl && currentSession) {
         const elapsed = getElapsedSeconds();
@@ -272,7 +338,7 @@
 
         /* Persist duration every 30 seconds */
         if (elapsed > 0 && elapsed % 30 === 0) {
-          sendMessage({ type: "UPDATE_DURATION", duration: elapsed });
+          void sendMessage({ type: "UPDATE_DURATION", duration: elapsed });
         }
       }
     }, 1000);
@@ -281,20 +347,21 @@
   /** --- Init: check existing session on page load --- */
 
   async function init() {
-    try {
-      const state = await sendMessage({ type: "GET_TAB_STATE" });
-      if (state?.hasSession && state.session) {
-        currentSession = state.session;
-        showStickyBar();
-      }
-    } catch {
-      /* Extension context may be unavailable */
+    const state = await sendMessage({ type: "GET_TAB_STATE" });
+    if (state?.hasSession && state.session) {
+      currentSession = state.session;
+      showStickyBar();
     }
   }
 
   /** --- Message listener from background --- */
 
   chrome.runtime.onMessage.addListener((message) => {
+    if (!isExtensionContextValid()) {
+      handleContextInvalidated();
+      return;
+    }
+
     switch (message.type) {
       case "SHOW_PROMPT":
         if (!currentSession) {
@@ -339,4 +406,15 @@
   } else {
     init();
   }
+
+  /** Flush duration when tab closes or page unloads */
+  function flushDuration() {
+    if (!currentSession || !extensionAvailable) return;
+    void sendMessage({ type: "UPDATE_DURATION", duration: getElapsedSeconds() });
+  }
+
+  window.addEventListener("pagehide", flushDuration);
+  document.addEventListener("visibilitychange", () => {
+    if (document.visibilityState === "hidden") flushDuration();
+  });
 })();

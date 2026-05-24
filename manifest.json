@@ -13,6 +13,15 @@
     "default_popup": "popup.html",
     "default_title": "IntentTab"
   },
+  "commands": {
+    "stop-session": {
+      "suggested_key": {
+        "default": "Alt+I",
+        "mac": "Alt+I"
+      },
+      "description": "Stop the current IntentTab session"
+    }
+  },
   "content_scripts": [
     {
       "matches": ["http://*/*", "https://*/*"],

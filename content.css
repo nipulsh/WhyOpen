@@ -153,6 +153,17 @@ body.it-blurred > *:not(#intenttab-root) {
   color: #e8e8f0;
 }
 
+.it-btn-success.it-btn-selected {
+  box-shadow: 0 0 0 3px rgba(52, 199, 89, 0.45);
+}
+
+.it-btn-secondary.it-btn-selected {
+  background: rgba(124, 111, 247, 0.18);
+  border-color: #7c6ff7;
+  color: #e8e8f0;
+  box-shadow: 0 0 0 3px rgba(124, 111, 247, 0.35);
+}
+
 .it-completion-overlay {
   animation: it-fade-in 0.25s ease;
 }
