@@ -91,6 +91,26 @@ export async function updateSession(id, updates) {
 }
 
 /**
+ * Fetch the open (unclosed) session for a tab, if any.
+ */
+export async function getOpenSessionByTabId(tabId) {
+  const db = await openDB();
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction(STORE_NAME, 'readonly');
+    const store = tx.objectStore(STORE_NAME);
+    const req = store.index('tabId').getAll(tabId);
+
+    req.onsuccess = () => {
+      const open = req.result
+        .filter((s) => s.closedAt === null)
+        .sort((a, b) => b.openedAt - a.openedAt)[0];
+      resolve(open || null);
+    };
+    req.onerror = () => reject(req.error);
+  });
+}
+
+/**
  * Fetch all sessions, newest first.
  */
 export async function getAllSessions() {

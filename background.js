@@ -5,6 +5,7 @@
 
 import {
   createSession,
+  getOpenSessionByTabId,
   updateSession,
 } from './db.js';
 
@@ -29,6 +30,32 @@ async function scheduleCompletionCheck(tabId, delayMs = COMPLETION_CHECK_MS) {
 
 async function clearCompletionCheck(tabId) {
   await chrome.alarms.clear(completionAlarmName(tabId));
+}
+
+function sessionFromRecord(record) {
+  return {
+    id: record.id,
+    tabId: record.tabId,
+    url: record.url,
+    hostname: record.hostname,
+    title: record.title,
+    reason: record.reason,
+    openedAt: record.openedAt,
+  };
+}
+
+/** Restore in-memory session from IndexedDB (survives tab reload / service worker restart) */
+async function getOrRestoreSession(tabId) {
+  if (activeSessions.has(tabId)) {
+    return activeSessions.get(tabId);
+  }
+
+  const record = await getOpenSessionByTabId(tabId);
+  if (!record) return null;
+
+  const session = sessionFromRecord(record);
+  activeSessions.set(tabId, session);
+  return session;
 }
 
 /**
@@ -82,60 +109,83 @@ async function notifyTab(tabId, message) {
 /**
  * Begin intent flow for a tab if no active session exists.
  */
-async function maybePromptTab(tabId, url, title) {
+async function promptForIntention(tabId, url, title) {
   if (!isTrackableUrl(url)) return;
-  if (activeSessions.has(tabId)) {
-    await notifyTab(tabId, {
-      type: 'RESTORE_SESSION',
-      session: activeSessions.get(tabId),
-    });
-    return;
-  }
 
-  const promptKey = `${tabId}:${url}`;
+  const hostname = getHostname(url);
+  const promptKey = `${tabId}:${hostname}`;
+
   if (promptedTabs.has(promptKey)) return;
   promptedTabs.add(promptKey);
 
   await notifyTab(tabId, {
     type: 'SHOW_PROMPT',
     url,
-    hostname: getHostname(url),
-    title: title || getHostname(url),
+    hostname,
+    title: title || hostname,
   });
+}
+
+/**
+ * Handle tab navigation: prompt on new sites, keep session on reload / same-site routes.
+ */
+async function handleTabNavigation(tabId, tab) {
+  const url = tab.url;
+  if (!isTrackableUrl(url)) return;
+
+  const hostname = getHostname(url);
+  const session = await getOrRestoreSession(tabId);
+
+  if (session) {
+    const sessionHost = session.hostname || getHostname(session.url);
+
+    if (hostname !== sessionHost) {
+      /* Different website — end previous session and ask for a new intention */
+      await closeSessionForTab(tabId, 'site_change');
+      await promptForIntention(tabId, url, tab.title);
+      return;
+    }
+
+    /* Same site — reload or route change, keep existing intention */
+    if (session.url !== url || session.title !== tab.title) {
+      session.url = url;
+      session.hostname = hostname;
+      session.title = tab.title || hostname;
+      await updateSession(session.id, {
+        url,
+        hostname,
+        title: session.title,
+      });
+    }
+
+    await notifyTab(tabId, {
+      type: 'RESTORE_SESSION',
+      session,
+    });
+    return;
+  }
+
+  await promptForIntention(tabId, url, tab.title);
 }
 
 /** --- Tab lifecycle listeners --- */
 
 chrome.tabs.onCreated.addListener(async (tab) => {
   if (tab.id && tab.url && isTrackableUrl(tab.url)) {
-    await maybePromptTab(tab.id, tab.url, tab.title);
+    await handleTabNavigation(tab.id, tab);
   }
 });
 
 chrome.tabs.onUpdated.addListener(async (tabId, changeInfo, tab) => {
-  if (changeInfo.status === 'complete' && tab.url && isTrackableUrl(tab.url)) {
-    if (activeSessions.has(tabId)) {
-      const session = activeSessions.get(tabId);
-      if (session.url !== tab.url) {
-        /* Navigation within tab — update URL but keep same session */
-        session.url = tab.url;
-        session.hostname = getHostname(tab.url);
-        session.title = tab.title || session.hostname;
-        await updateSession(session.id, {
-          url: tab.url,
-          hostname: session.hostname,
-          title: session.title,
-        });
-      }
-      await notifyTab(tabId, {
-        type: 'RESTORE_SESSION',
-        session,
-      });
-    } else {
-      promptedTabs.delete(`${tabId}:${tab.url}`);
-      await maybePromptTab(tabId, tab.url, tab.title);
-    }
-  }
+  if (!tab.url || !isTrackableUrl(tab.url)) return;
+
+  /* Full page load, reload, or SPA route change (history.pushState) */
+  const shouldHandle =
+    changeInfo.status === 'complete' || Boolean(changeInfo.url);
+
+  if (!shouldHandle) return;
+
+  await handleTabNavigation(tabId, tab);
 });
 
 chrome.tabs.onRemoved.addListener(async (tabId) => {
@@ -150,7 +200,8 @@ chrome.alarms.onAlarm.addListener(async (alarm) => {
   if (!alarm.name.startsWith('intenttab-completion-')) return;
 
   const tabId = Number(alarm.name.replace('intenttab-completion-', ''));
-  if (!activeSessions.has(tabId)) return;
+  const session = await getOrRestoreSession(tabId);
+  if (!session) return;
 
   await notifyTab(tabId, { type: 'SHOW_COMPLETION_CHECK', automatic: true });
 });
@@ -160,7 +211,11 @@ chrome.alarms.onAlarm.addListener(async (alarm) => {
 async function closeSessionForTab(tabId, reason = 'manual', options = {}) {
   await clearCompletionCheck(tabId);
 
-  const session = activeSessions.get(tabId);
+  let session = activeSessions.get(tabId);
+  if (!session) {
+    const record = await getOpenSessionByTabId(tabId);
+    if (record) session = sessionFromRecord(record);
+  }
   if (!session) return null;
 
   const closedAt = Date.now();
@@ -196,8 +251,9 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   (async () => {
     switch (message.type) {
       case 'GET_TAB_STATE': {
-        if (tabId && activeSessions.has(tabId)) {
-          sendResponse({ hasSession: true, session: activeSessions.get(tabId) });
+        const session = tabId ? await getOrRestoreSession(tabId) : null;
+        if (session) {
+          sendResponse({ hasSession: true, session });
         } else {
           sendResponse({ hasSession: false });
         }
@@ -239,7 +295,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       }
 
       case 'COMPLETION_DISMISSED': {
-        if (tabId && activeSessions.has(tabId)) {
+        if (tabId && (await getOrRestoreSession(tabId))) {
           await scheduleCompletionCheck(tabId);
         }
         sendResponse({ ok: true });
@@ -247,7 +303,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       }
 
       case 'UPDATE_DURATION': {
-        const session = activeSessions.get(tabId);
+        const session = await getOrRestoreSession(tabId);
         if (session && message.duration != null) {
           await updateSession(session.id, { duration: message.duration });
         }

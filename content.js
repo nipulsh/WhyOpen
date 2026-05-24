@@ -309,6 +309,7 @@
       case "RESTORE_SESSION":
         currentSession = message.session;
         promptVisible = false;
+        completionPromptVisible = false;
         document.body.classList.remove("it-blurred");
         showStickyBar();
         break;
