@@ -1,0 +1,30 @@
+{
+  "manifest_version": 3,
+  "name": "IntentTab",
+  "version": "1.0.0",
+  "description": "Ask why you're opening each tab — stay intentional while browsing.",
+  "permissions": ["tabs", "scripting", "alarms"],
+  "host_permissions": ["<all_urls>"],
+  "background": {
+    "service_worker": "background.js",
+    "type": "module"
+  },
+  "action": {
+    "default_popup": "popup.html",
+    "default_title": "IntentTab"
+  },
+  "content_scripts": [
+    {
+      "matches": ["http://*/*", "https://*/*"],
+      "js": ["content.js"],
+      "css": ["content.css"],
+      "run_at": "document_idle"
+    }
+  ],
+  "web_accessible_resources": [
+    {
+      "resources": ["dashboard.html"],
+      "matches": ["<all_urls>"]
+    }
+  ]
+}

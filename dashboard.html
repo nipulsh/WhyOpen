@@ -1,0 +1,64 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>IntentTab — Analytics</title>
+  <link rel="stylesheet" href="dashboard.css">
+</head>
+<body>
+  <div class="dashboard">
+    <header class="dash-header">
+      <div class="dash-brand">
+        <span class="dash-logo">◎</span>
+        <div>
+          <h1>IntentTab</h1>
+          <p class="dash-subtitle">Your browsing intentions</p>
+        </div>
+      </div>
+    </header>
+
+    <section class="stats-grid">
+      <article class="stat-card">
+        <span class="stat-icon">⊞</span>
+        <span class="stat-number" id="total-tabs">—</span>
+        <span class="stat-title">Total tabs opened</span>
+      </article>
+      <article class="stat-card">
+        <span class="stat-icon">⏱</span>
+        <span class="stat-number" id="total-time">—</span>
+        <span class="stat-title">Total session time</span>
+      </article>
+      <article class="stat-card">
+        <span class="stat-icon">◎</span>
+        <span class="stat-number" id="avg-duration">—</span>
+        <span class="stat-title">Avg. session length</span>
+      </article>
+    </section>
+
+    <div class="panels">
+      <section class="panel">
+        <h2>Most visited websites</h2>
+        <div class="panel-body" id="most-visited">
+          <p class="empty-state">No data yet</p>
+        </div>
+      </section>
+
+      <section class="panel">
+        <h2>Recent reasons</h2>
+        <div class="panel-body" id="recent-reasons">
+          <p class="empty-state">No reasons recorded yet</p>
+        </div>
+      </section>
+    </div>
+
+    <section class="panel panel-full">
+      <h2>Session history</h2>
+      <div class="panel-body" id="session-history">
+        <p class="empty-state">No sessions yet</p>
+      </div>
+    </section>
+  </div>
+  <script type="module" src="dashboard.js"></script>
+</body>
+</html>

@@ -1,0 +1,40 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>IntentTab</title>
+  <link rel="stylesheet" href="popup.css">
+</head>
+<body>
+  <div class="popup">
+    <header class="popup-header">
+      <div class="logo">◎</div>
+      <div>
+        <h1>IntentTab</h1>
+        <p class="tagline">Browse with intention</p>
+      </div>
+    </header>
+
+    <div class="stat-card">
+      <span class="stat-label">Active sessions</span>
+      <span class="stat-value" id="active-count">—</span>
+    </div>
+
+    <p class="hint">
+      You'll be asked why you're opening each new tab. Your reasons stay visible until you close the session.
+    </p>
+
+    <nav class="popup-actions">
+      <a href="dashboard.html" target="_blank" class="btn btn-primary" id="open-dashboard">
+        Open analytics
+      </a>
+    </nav>
+
+    <footer class="popup-footer">
+      <span>v1.0.0</span>
+    </footer>
+  </div>
+  <script src="popup.js"></script>
+</body>
+</html>
